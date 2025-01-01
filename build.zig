@@ -41,7 +41,7 @@ pub fn build(b: *Build) !void {
     b.installArtifact(lib);
 
     // Zig module
-    const luauModule = b.addModule("zig-luau", .{
+    const luauModule = b.addModule("luau", .{
         .root_source_file = b.path("src/lib.zig"),
     });
 
@@ -100,7 +100,7 @@ pub fn build(b: *Build) !void {
     }
 
     const docs = b.addStaticLibrary(.{
-        .name = "zig-luau",
+        .name = "luau",
         .root_source_file = b.path("src/lib.zig"),
         .target = target,
         .optimize = optimize,

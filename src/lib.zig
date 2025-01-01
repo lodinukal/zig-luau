@@ -1450,7 +1450,7 @@ pub const Luau = struct {
         if (c.lua_getlocal(stateCast(luau), level, n)) |name| {
             return std.mem.span(name);
         }
-        return error.Fail;
+        return error.None;
     }
 
     /// Gets information about the `n`th upvalue of the closure at index `func_index`
@@ -1458,7 +1458,11 @@ pub const Luau = struct {
         if (c.lua_getupvalue(stateCast(luau), func_index, n)) |name| {
             return std.mem.span(name);
         }
-        return error.Fail;
+        return error.None;
+    }
+
+    pub inline fn getArgument(luau: *Luau, level: i32, n: i32) i32 {
+        return c.lua_getargument(stateCast(luau), level, n);
     }
 
     /// Sets the value of a local variable
@@ -1888,6 +1892,10 @@ pub const Luau = struct {
 
     pub inline fn setSafeEnv(luau: *Luau, idx: i32, enabled: bool) void {
         c.lua_setsafeenv(stateCast(luau), idx, if (enabled) 1 else 0);
+    }
+
+    pub inline fn getStackdepth(luau: *Luau) i32 {
+        return c.lua_stackdepth(stateCast(luau));
     }
 
     pub inline fn setSingleStep(luau: *Luau, enabled: bool) void {
