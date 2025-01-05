@@ -1398,6 +1398,10 @@ pub const Luau = struct {
         return c.lua_yield(stateCast(luau), num_results);
     }
 
+    pub inline fn gBreak(luau: *Luau) i32 {
+        return c.lua_break(stateCast(luau));
+    }
+
     // Debug library functions
     //
     // The debug interface functions are included in alphabetical order
