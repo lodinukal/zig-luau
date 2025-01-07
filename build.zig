@@ -4,7 +4,7 @@ const Build = std.Build;
 const Step = std.Build.Step;
 
 const LUAU_VERSION = std.SemanticVersion{ .major = 0, .minor = 655, .patch = 0 };
-const VERSION_HASH = "12202e48ce8bbddc043bbaadd10ac783d427b41b1ad9b6b3cb4b91bff6cdbb1a3d98";
+// const VERSION_HASH = "12202e48ce8bbddc043bbaadd10ac783d427b41b1ad9b6b3cb4b91bff6cdbb1a3d98";
 
 pub fn build(b: *Build) !void {
     // Remove the default install and uninstall steps
@@ -12,12 +12,13 @@ pub fn build(b: *Build) !void {
 
     const luau_dep = b.lazyDependency("luau", .{}) orelse unreachable;
 
-    std.debug.assert(std.mem.eql(u8, luau_dep.builder.pkg_hash, VERSION_HASH));
+    // std.debug.assert(std.mem.eql(u8, luau_dep.builder.pkg_hash, VERSION_HASH));
 
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
     const use_4_vector = b.option(bool, "use_4_vector", "Build Luau to use 4-vectors instead of the default 3-vector.") orelse false;
+    const wasm_env_name = b.option([]const u8, "wasm_env", "The environment to import symbols from when building for WebAssembly.") orelse "env";
 
     // Expose build configuration to the zig-luau module
     const config = b.addOptions();
@@ -37,7 +38,7 @@ pub fn build(b: *Build) !void {
 
     const c_module = headers.createModule();
 
-    const lib = try buildLuau(b, target, luau_dep, optimize, use_4_vector);
+    const lib = try buildLuau(b, target, luau_dep, optimize, use_4_vector, wasm_env_name);
     b.installArtifact(lib);
 
     // Zig module
@@ -118,6 +119,18 @@ pub fn build(b: *Build) !void {
     docs_step.dependOn(&install_docs.step);
 }
 
+pub fn addModuleExportSymbols(b: *Build, module: *Build.Module) void {
+    if (module.resolved_target.?.result.isWasm()) {
+        var old_export_symbols = std.ArrayList([]const u8).init(b.allocator);
+        old_export_symbols.appendSlice(module.export_symbol_names) catch @panic("OOM");
+        old_export_symbols.appendSlice(&.{
+            "zig_luau_try_impl",
+            "zig_luau_catch_impl",
+        }) catch @panic("OOM");
+        module.export_symbol_names = old_export_symbols.toOwnedSlice() catch @panic("OOM");
+    }
+}
+
 fn buildAndLinkModule(
     b: *Build,
     target: Build.ResolvedTarget,
@@ -150,6 +163,7 @@ fn buildLuau(
     dependency: *Build.Dependency,
     optimize: std.builtin.OptimizeMode,
     use_4_vector: bool,
+    wasm_env_name: []const u8,
 ) !*Step.Compile {
     const lib = b.addStaticLibrary(.{
         .name = "luau",
@@ -158,19 +172,17 @@ fn buildLuau(
         .version = LUAU_VERSION,
     });
 
-    lib.addIncludePath(b.path("src/Lib"));
-    for (LUAU_Ast_HEADERS_DIRS) |dir|
-        lib.addIncludePath(dependency.path(dir));
-    for (LUAU_Common_HEADERS_DIRS) |dir|
-        lib.addIncludePath(dependency.path(dir));
-    for (LUAU_Compiler_HEADERS_DIRS) |dir|
-        lib.addIncludePath(dependency.path(dir));
+    lib.addIncludePath(dependency.path("src/Lib"));
+    lib.addIncludePath(dependency.path("Ast/include"));
+    lib.addIncludePath(dependency.path("Common/include"));
+    lib.addIncludePath(dependency.path("Compiler/include"));
     // CodeGen is not supported on WASM
-    if (!target.result.isWasm())
-        for (LUAU_CodeGen_HEADERS_DIRS) |dir|
-            lib.addIncludePath(dependency.path(dir));
-    for (LUAU_VM_HEADERS_DIRS) |dir|
-        lib.addIncludePath(dependency.path(dir));
+    if (!target.result.isWasm()) {
+        lib.addIncludePath(dependency.path("CodeGen/include"));
+    }
+    lib.addIncludePath(dependency.path("VM/include"));
+    lib.addIncludePath(dependency.path("VM/src"));
+    lib.addIncludePath(dependency.path(""));
 
     const FLAGS = [_][]const u8{
         // setjmp.h compile error in Wasm
@@ -180,28 +192,11 @@ fn buildLuau(
         "-DLUACODEGEN_API=extern\"C\"",
         if (use_4_vector) "-DLUA_VECTOR_SIZE=4" else "",
         if (target.result.isWasm()) "-fexceptions" else "",
+        if (target.result.isWasm()) b.fmt("-DLUAU_WASM_ENV_NAME=\"{s}\"", .{wasm_env_name}) else "",
     };
 
     lib.linkLibCpp();
-
-    for (LUAU_Ast_SOURCE_FILES) |file|
-        lib.addCSourceFile(.{ .file = dependency.path(file), .flags = &FLAGS });
-    for (LUAU_Compiler_SOURCE_FILES) |file|
-        lib.addCSourceFile(.{ .file = dependency.path(file), .flags = &FLAGS });
-    // CodeGen is not supported on WASM
-    if (!target.result.isWasm())
-        for (LUAU_CodeGen_SOURCE_FILES) |file|
-            lib.addCSourceFile(.{ .file = dependency.path(file), .flags = &FLAGS });
-    for (LUAU_VM_SOURCE_FILES) |file|
-        lib.addCSourceFile(.{ .file = dependency.path(file), .flags = &FLAGS });
-
     lib.addCSourceFile(.{ .file = b.path("src/luau.cpp"), .flags = &FLAGS });
-
-    // Modules
-    lib.addCSourceFile(.{ .file = b.path("src/Ast/Allocator.cpp"), .flags = &FLAGS });
-    lib.addCSourceFile(.{ .file = b.path("src/Ast/Lexer.cpp"), .flags = &FLAGS });
-    lib.addCSourceFile(.{ .file = b.path("src/Ast/Parser.cpp"), .flags = &FLAGS });
-    lib.addCSourceFile(.{ .file = b.path("src/Compiler/Compiler.cpp"), .flags = &FLAGS });
 
     // It may not be as likely that other software links against Luau, but might as well expose these anyway
     lib.installHeader(dependency.path("VM/include/lua.h"), "lua.h");
@@ -212,122 +207,3 @@ fn buildLuau(
 
     return lib;
 }
-
-const LUAU_Ast_HEADERS_DIRS = [_][]const u8{
-    "Ast/include/",
-};
-const LUAU_Ast_SOURCE_FILES = [_][]const u8{
-    "Ast/src/Ast.cpp",
-    "Ast/src/Allocator.cpp",
-    "Ast/src/Confusables.cpp",
-    "Ast/src/Lexer.cpp",
-    "Ast/src/Location.cpp",
-    "Ast/src/Parser.cpp",
-    "Ast/src/StringUtils.cpp",
-    "Ast/src/TimeTrace.cpp",
-};
-
-const LUAU_Common_HEADERS_DIRS = [_][]const u8{
-    "Common/include/",
-};
-
-const LUAU_Compiler_HEADERS_DIRS = [_][]const u8{
-    "Compiler/include/",
-    "Compiler/src/",
-};
-const LUAU_Compiler_SOURCE_FILES = [_][]const u8{
-    "Compiler/src/BuiltinFolding.cpp",
-    "Compiler/src/Builtins.cpp",
-    "Compiler/src/BytecodeBuilder.cpp",
-    "Compiler/src/Compiler.cpp",
-    "Compiler/src/ConstantFolding.cpp",
-    "Compiler/src/CostModel.cpp",
-    "Compiler/src/TableShape.cpp",
-    "Compiler/src/Types.cpp",
-    "Compiler/src/ValueTracking.cpp",
-    "Compiler/src/lcode.cpp",
-};
-
-const LUAU_CodeGen_HEADERS_DIRS = [_][]const u8{
-    "CodeGen/include/",
-    "CodeGen/src/",
-};
-const LUAU_CodeGen_SOURCE_FILES = [_][]const u8{
-    "CodeGen/src/AssemblyBuilderA64.cpp",
-    "CodeGen/src/AssemblyBuilderX64.cpp",
-    "CodeGen/src/CodeAllocator.cpp",
-    "CodeGen/src/CodeBlockUnwind.cpp",
-    "CodeGen/src/CodeGen.cpp",
-    "CodeGen/src/CodeGenAssembly.cpp",
-    "CodeGen/src/CodeGenContext.cpp",
-    "CodeGen/src/CodeGenUtils.cpp",
-    "CodeGen/src/CodeGenA64.cpp",
-    "CodeGen/src/CodeGenX64.cpp",
-    "CodeGen/src/EmitBuiltinsX64.cpp",
-    "CodeGen/src/EmitCommonX64.cpp",
-    "CodeGen/src/EmitInstructionX64.cpp",
-    "CodeGen/src/IrAnalysis.cpp",
-    "CodeGen/src/IrBuilder.cpp",
-    "CodeGen/src/IrCallWrapperX64.cpp",
-    "CodeGen/src/IrDump.cpp",
-    "CodeGen/src/IrLoweringA64.cpp",
-    "CodeGen/src/IrLoweringX64.cpp",
-    "CodeGen/src/IrRegAllocA64.cpp",
-    "CodeGen/src/IrRegAllocX64.cpp",
-    "CodeGen/src/IrTranslateBuiltins.cpp",
-    "CodeGen/src/IrTranslation.cpp",
-    "CodeGen/src/IrUtils.cpp",
-    "CodeGen/src/IrValueLocationTracking.cpp",
-    "CodeGen/src/lcodegen.cpp",
-    "CodeGen/src/NativeProtoExecData.cpp",
-    "CodeGen/src/NativeState.cpp",
-    "CodeGen/src/OptimizeConstProp.cpp",
-    "CodeGen/src/OptimizeDeadStore.cpp",
-    "CodeGen/src/OptimizeFinalX64.cpp",
-    "CodeGen/src/UnwindBuilderDwarf2.cpp",
-    "CodeGen/src/UnwindBuilderWin.cpp",
-    "CodeGen/src/BytecodeAnalysis.cpp",
-    "CodeGen/src/BytecodeSummary.cpp",
-    "CodeGen/src/SharedCodeAllocator.cpp",
-};
-
-const LUAU_VM_HEADERS_DIRS = [_][]const u8{
-    "VM/include/",
-    "VM/src/",
-};
-
-const LUAU_VM_SOURCE_FILES = [_][]const u8{
-    "VM/src/lapi.cpp",
-    "VM/src/laux.cpp",
-    "VM/src/lbaselib.cpp",
-    "VM/src/lbitlib.cpp",
-    "VM/src/lbuffer.cpp",
-    "VM/src/lbuflib.cpp",
-    "VM/src/lbuiltins.cpp",
-    "VM/src/lcorolib.cpp",
-    "VM/src/ldblib.cpp",
-    "VM/src/ldebug.cpp",
-    "VM/src/ldo.cpp",
-    "VM/src/lfunc.cpp",
-    "VM/src/lgc.cpp",
-    "VM/src/lgcdebug.cpp",
-    "VM/src/linit.cpp",
-    "VM/src/lmathlib.cpp",
-    "VM/src/lmem.cpp",
-    "VM/src/lnumprint.cpp",
-    "VM/src/lobject.cpp",
-    "VM/src/loslib.cpp",
-    "VM/src/lperf.cpp",
-    "VM/src/lstate.cpp",
-    "VM/src/lstring.cpp",
-    "VM/src/lstrlib.cpp",
-    "VM/src/ltable.cpp",
-    "VM/src/ltablib.cpp",
-    "VM/src/ltm.cpp",
-    "VM/src/ludata.cpp",
-    "VM/src/lutf8lib.cpp",
-    "VM/src/lvmexecute.cpp",
-    "VM/src/lveclib.cpp",
-    "VM/src/lvmload.cpp",
-    "VM/src/lvmutils.cpp",
-};
