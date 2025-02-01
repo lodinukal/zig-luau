@@ -19,17 +19,17 @@ static int assertionHandler(const char *expr, const char *file, int line, const 
     return 1;
 }
 
-extern "C" void zig_registerAssertionHandler()
+LUA_API void zig_registerAssertionHandler()
 {
     Luau::assertHandler() = assertionHandler;
 }
 
-extern "C" void zig_luau_free(void *ptr)
+LUA_API void zig_luau_free(void *ptr)
 {
     free(ptr);
 }
 
-extern "C" bool zig_luau_setflag_bool(const char *name, size_t nameLen, bool value)
+LUA_API bool zig_luau_setflag_bool(const char *name, size_t nameLen, bool value)
 {
     std::string flagName(name, nameLen);
     for (Luau::FValue<bool> *flag = Luau::FValue<bool>::list; flag; flag = flag->next)
@@ -41,7 +41,7 @@ extern "C" bool zig_luau_setflag_bool(const char *name, size_t nameLen, bool val
     return false;
 }
 
-extern "C" bool zig_luau_setflag_int(const char *name, size_t nameLen, int value)
+LUA_API bool zig_luau_setflag_int(const char *name, size_t nameLen, int value)
 {
     std::string flagName(name, nameLen);
     for (Luau::FValue<int> *flag = Luau::FValue<int>::list; flag; flag = flag->next)
@@ -53,7 +53,7 @@ extern "C" bool zig_luau_setflag_int(const char *name, size_t nameLen, int value
     return false;
 }
 
-extern "C" bool zig_luau_getflag_bool(const char *name, size_t nameLen, bool *value)
+LUA_API bool zig_luau_getflag_bool(const char *name, size_t nameLen, bool *value)
 {
     std::string flagName(name, nameLen);
     for (Luau::FValue<bool> *flag = Luau::FValue<bool>::list; flag; flag = flag->next)
@@ -65,7 +65,7 @@ extern "C" bool zig_luau_getflag_bool(const char *name, size_t nameLen, bool *va
     return false;
 }
 
-extern "C" bool zig_luau_getflag_int(const char *name, size_t nameLen, int *value)
+LUA_API bool zig_luau_getflag_int(const char *name, size_t nameLen, int *value)
 {
     std::string flagName(name, nameLen);
     for (Luau::FValue<int> *flag = Luau::FValue<int>::list; flag; flag = flag->next)
@@ -77,14 +77,14 @@ extern "C" bool zig_luau_getflag_int(const char *name, size_t nameLen, int *valu
     return false;
 }
 
-extern "C" struct FlagGroup
+LUA_API struct FlagGroup
 {
     const char **names;
     int *types;
     size_t size;
 };
 
-extern "C" FlagGroup zig_luau_getflags(const char *name, size_t nameLen, int value)
+LUA_API FlagGroup zig_luau_getflags(const char *name, size_t nameLen, int value)
 {
     std::vector<std::string> names_list;
     std::vector<int> types_list;
@@ -116,7 +116,7 @@ extern "C" FlagGroup zig_luau_getflags(const char *name, size_t nameLen, int val
     return {names, types, size};
 }
 
-extern "C" void zig_luau_freeflags(FlagGroup group)
+LUA_API void zig_luau_freeflags(FlagGroup group)
 {
     for (size_t i = 0; i < group.size; i++)
     {
@@ -127,15 +127,15 @@ extern "C" void zig_luau_freeflags(FlagGroup group)
 }
 
 // Internal API
-extern "C" void zig_luau_luaD_checkstack(lua_State *L, int n)
+LUA_API void zig_luau_luaD_checkstack(lua_State *L, int n)
 {
     luaD_checkstack(L, n);
 }
-extern "C" void zig_luau_expandstacklimit(lua_State *L, int n)
+LUA_API void zig_luau_expandstacklimit(lua_State *L, int n)
 {
     expandstacklimit(L, L->top + n);
 }
-extern "C" int zig_luau_luaG_isnative(lua_State *L, int level)
+LUA_API int zig_luau_luaG_isnative(lua_State *L, int level)
 {
     return luaG_isnative(L, level);
 }
@@ -164,12 +164,12 @@ void zig_luau_throw_js(const std::exception &e)
     zig_luau_throw_js_impl(&e);
 }
 
-extern "C" void zig_luau_try_impl(TryCatchContext *context)
+LUA_API void zig_luau_try_impl(TryCatchContext *context)
 {
     context->trying();
 }
 
-extern "C" void zig_luau_catch_impl(TryCatchContext *context, const std::exception &e)
+LUA_API void zig_luau_catch_impl(TryCatchContext *context, const std::exception &e)
 {
     context->catching(e);
 }

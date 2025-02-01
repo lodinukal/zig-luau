@@ -19,6 +19,7 @@ pub fn build(b: *Build) !void {
 
     const use_4_vector = b.option(bool, "use_4_vector", "Build Luau to use 4-vectors instead of the default 3-vector.") orelse false;
     const wasm_env_name = b.option([]const u8, "wasm_env", "The environment to import symbols from when building for WebAssembly.") orelse "env";
+    const shared_library = b.option(bool, "shared", "Build a shared library instead of a static library.") orelse false;
 
     // Expose build configuration to the zig-luau module
     const config = b.addOptions();
@@ -38,7 +39,7 @@ pub fn build(b: *Build) !void {
 
     const c_module = headers.createModule();
 
-    const lib = try buildLuau(b, target, luau_dep, optimize, use_4_vector, wasm_env_name);
+    const lib = try buildLuau(b, target, luau_dep, optimize, use_4_vector, wasm_env_name, shared_library);
     b.installArtifact(lib);
 
     // Zig module
@@ -164,8 +165,14 @@ fn buildLuau(
     optimize: std.builtin.OptimizeMode,
     use_4_vector: bool,
     wasm_env_name: []const u8,
+    shared_library: bool,
 ) !*Step.Compile {
-    const lib = b.addStaticLibrary(.{
+    const lib = if (shared_library) b.addSharedLibrary(.{
+        .name = "luau",
+        .target = target,
+        .optimize = optimize,
+        .version = LUAU_VERSION,
+    }) else b.addStaticLibrary(.{
         .name = "luau",
         .target = target,
         .optimize = optimize,
@@ -184,12 +191,20 @@ fn buildLuau(
     lib.addIncludePath(dependency.path("VM/src"));
     lib.addIncludePath(dependency.path(""));
 
+    const api = api: {
+        if (!shared_library) break :api "extern \"C\"";
+        switch (target.result.os.tag) {
+            .windows => break :api "extern \"C\" __declspec(dllexport)",
+            else => break :api "extern \"C\"",
+        }
+    };
+
     const FLAGS = [_][]const u8{
         // setjmp.h compile error in Wasm
         "-DLUA_USE_LONGJMP=" ++ if (!target.result.isWasm()) "1" else "0",
-        "-DLUA_API=extern\"C\"",
-        "-DLUACODE_API=extern\"C\"",
-        "-DLUACODEGEN_API=extern\"C\"",
+        b.fmt("-DLUA_API={s}", .{api}),
+        b.fmt("-DLUACODE_API={s}", .{api}),
+        b.fmt("-DLUACODEGEN_API={s}", .{api}),
         if (use_4_vector) "-DLUA_VECTOR_SIZE=4" else "",
         if (target.result.isWasm()) "-fexceptions" else "",
         if (target.result.isWasm()) b.fmt("-DLUAU_WASM_ENV_NAME=\"{s}\"", .{wasm_env_name}) else "",
