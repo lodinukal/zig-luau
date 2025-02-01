@@ -179,6 +179,7 @@ fn buildLuau(
         .version = LUAU_VERSION,
     });
 
+    lib.root_module.pic = true;
     lib.addIncludePath(dependency.path("src/Lib"));
     lib.addIncludePath(dependency.path("Ast/include"));
     lib.addIncludePath(dependency.path("Common/include"));
