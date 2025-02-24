@@ -1,6 +1,7 @@
 .{
     .name = "luau",
     .version = "0.3.1+655",
+    .minimum_zig_version = "0.14.0-dev.3286+05d8b565a",
     .dependencies = .{
         .luau = .{
             .url = "git+https://github.com/lodinukal/luau#7c15c09700f44d7380708f8db0555a30a46ddf8f",

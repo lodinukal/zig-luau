@@ -26,6 +26,9 @@ pub fn build(b: *Build) !void {
     config.addOption(bool, "use_4_vector", use_4_vector);
     config.addOption(std.SemanticVersion, "luau_version", LUAU_VERSION);
 
+    const is_wasm = target.result.ofmt == .wasm;
+    const codegen_supported = !is_wasm;
+
     // Luau C Headers
     const headers = b.addTranslateC(.{
         .root_source_file = b.path("src/luau.h"),
@@ -34,13 +37,14 @@ pub fn build(b: *Build) !void {
     });
     headers.addIncludePath(luau_dep.path("Compiler/include"));
     headers.addIncludePath(luau_dep.path("VM/include"));
-    if (!target.result.isWasm())
+    if (codegen_supported)
         headers.addIncludePath(luau_dep.path("CodeGen/include"));
 
-    const c_module = headers.createModule();
+    const c_module = headers.addModule("c_module");
 
     const lib = try buildLuau(b, target, luau_dep, optimize, use_4_vector, wasm_env_name, shared_library);
     b.installArtifact(lib);
+    lib.step.dependOn(&headers.step);
 
     // Zig module
     const luauModule = b.addModule("luau", .{
@@ -121,7 +125,7 @@ pub fn build(b: *Build) !void {
 }
 
 pub fn addModuleExportSymbols(b: *Build, module: *Build.Module) void {
-    if (module.resolved_target.?.result.isWasm()) {
+    if (module.resolved_target.?.result.ofmt == .wasm) {
         var old_export_symbols = std.ArrayList([]const u8).init(b.allocator);
         old_export_symbols.appendSlice(module.export_symbol_names) catch @panic("OOM");
         old_export_symbols.appendSlice(&.{
@@ -151,7 +155,7 @@ fn buildAndLinkModule(
 
     module.addIncludePath(dependency.path("Compiler/include"));
     module.addIncludePath(dependency.path("VM/include"));
-    if (!target.result.isWasm())
+    if (target.result.ofmt != .wasm)
         module.addIncludePath(dependency.path("CodeGen/include"));
 
     module.linkLibrary(lib);
@@ -185,7 +189,7 @@ fn buildLuau(
     lib.addIncludePath(dependency.path("Common/include"));
     lib.addIncludePath(dependency.path("Compiler/include"));
     // CodeGen is not supported on WASM
-    if (!target.result.isWasm()) {
+    if (target.result.ofmt != .wasm) {
         lib.addIncludePath(dependency.path("CodeGen/include"));
     }
     lib.addIncludePath(dependency.path("VM/include"));
@@ -202,13 +206,13 @@ fn buildLuau(
 
     const FLAGS = [_][]const u8{
         // setjmp.h compile error in Wasm
-        "-DLUA_USE_LONGJMP=" ++ if (!target.result.isWasm()) "1" else "0",
+        "-DLUA_USE_LONGJMP=" ++ if (target.result.ofmt != .wasm) "1" else "0",
         b.fmt("-DLUA_API={s}", .{api}),
         b.fmt("-DLUACODE_API={s}", .{api}),
         b.fmt("-DLUACODEGEN_API={s}", .{api}),
         if (use_4_vector) "-DLUA_VECTOR_SIZE=4" else "",
-        if (target.result.isWasm()) "-fexceptions" else "",
-        if (target.result.isWasm()) b.fmt("-DLUAU_WASM_ENV_NAME=\"{s}\"", .{wasm_env_name}) else "",
+        if (target.result.ofmt == .wasm) "-fexceptions" else "",
+        if (target.result.ofmt == .wasm) b.fmt("-DLUAU_WASM_ENV_NAME=\"{s}\"", .{wasm_env_name}) else "",
     };
 
     lib.linkLibCpp();
@@ -218,7 +222,7 @@ fn buildLuau(
     lib.installHeader(dependency.path("VM/include/lua.h"), "lua.h");
     lib.installHeader(dependency.path("VM/include/lualib.h"), "lualib.h");
     lib.installHeader(dependency.path("VM/include/luaconf.h"), "luaconf.h");
-    if (!target.result.isWasm())
+    if (target.result.ofmt != .wasm)
         lib.installHeader(dependency.path("CodeGen/include/luacodegen.h"), "luacodegen.h");
 
     return lib;
